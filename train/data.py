@@ -50,23 +50,48 @@ def _first_present(row: dict[str, Any], candidates: list[str]) -> Any:
     return None
 
 
+def _stringify_context(context: Any) -> str:
+    if isinstance(context, list):
+        chunks = []
+        for item in context:
+            if isinstance(item, dict):
+                chunks.append(str(item.get("text") or item.get("content") or item))
+            else:
+                chunks.append(str(item))
+        return "\n".join(chunks)
+    if isinstance(context, dict):
+        return str(context.get("text") or context.get("content") or context)
+    return str(context or "")
+
+
+def _derive_answer(answer: Any, context_text: str, allow_weak_labels: bool) -> tuple[str | None, bool]:
+    if answer not in (None, ""):
+        return str(answer), False
+    if allow_weak_labels and context_text.strip():
+        first_context = context_text.strip().splitlines()[0].strip()
+        return first_context, True
+    return None, False
+
+
 def _normalize_rows(rows: list[dict[str, Any]], config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     schema = config["dataset"].get("schema", {})
     instruction = config["dataset"].get("instruction", "Trả lời câu hỏi dựa trên ngữ cảnh.")
+    allow_weak_labels = bool(config["dataset"].get("allow_weak_labels_from_context", True))
     normalized = []
     dropped = 0
+    weak_labels = 0
     for idx, row in enumerate(rows):
         question = _first_present(row, schema.get("question", ["question"]))
         context = _first_present(row, schema.get("context", ["context"]))
         answer = _first_present(row, schema.get("answer", ["answer"]))
         source = _first_present(row, schema.get("source", ["source"]))
-        if isinstance(context, list):
-            context_text = "\n".join(str(item) for item in context)
-        else:
-            context_text = str(context or "")
-        if not question or not answer:
+        context_text = _stringify_context(context)
+        answer_text, used_weak_label = _derive_answer(answer, context_text, allow_weak_labels)
+        if not question or not answer_text:
             dropped += 1
             continue
+        if used_weak_label:
+            weak_labels += 1
         prompt = build_prompt(instruction, str(question), context_text)
         normalized.append(
             {
@@ -74,14 +99,14 @@ def _normalize_rows(rows: list[dict[str, Any]], config: dict[str, Any]) -> tuple
                 "instruction": instruction,
                 "question": str(question),
                 "legal_context": context_text,
-                "answer": str(answer),
+                "answer": answer_text,
                 "source_metadata": {"source": str(source) if source is not None else ""},
                 "source_group": str(source) if source is not None else "",
                 "prompt": prompt,
-                "text": prompt + str(answer),
+                "text": prompt + answer_text,
             }
         )
-    return normalized, {"dropped_records": dropped}
+    return normalized, {"dropped_records": dropped, "weak_labels_from_context": weak_labels}
 
 
 def _sample_rows(rows: list[dict[str, Any]], fraction: float, seed: int) -> list[dict[str, Any]]:
@@ -143,6 +168,22 @@ def prepare_dataset(config: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     normalized, normalization_meta = _normalize_rows(raw_rows, config)
     sampled = _sample_rows(normalized, float(config["dataset"].get("sample_fraction", 0.10)), seed)
     splits, grouped = _split_rows(sampled, config["dataset"].get("split_ratios", {}), seed)
+    if not splits["train"]:
+        available_columns = sorted({key for row in raw_rows[:20] for key in row.keys()})
+        debug_summary = {
+            "dataset_id": config["dataset"].get("id"),
+            "sample_fraction": config["dataset"].get("sample_fraction"),
+            "seed": seed,
+            "raw_records": len(raw_rows),
+            "normalized_records": len(normalized),
+            "sampled_records": len(sampled),
+            "available_columns_sample": available_columns,
+            **normalization_meta,
+        }
+        write_json(debug_summary, output_dir / "dataset_summary.json")
+        raise RuntimeError(
+            "Prepared train split is empty. Check dataset schema mapping or enable dataset.allow_weak_labels_from_context."
+        )
 
     data_dir = output_dir / "data"
     for split_name, split_rows in splits.items():

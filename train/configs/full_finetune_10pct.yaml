@@ -21,6 +21,7 @@ dataset:
     validation: 0.10
     test: 0.10
   max_records: null
+  allow_weak_labels_from_context: true
   schema:
     question:
       - question
@@ -38,6 +39,7 @@ dataset:
       - response
       - output
       - target
+      - positive
     source:
       - source
       - document_id
