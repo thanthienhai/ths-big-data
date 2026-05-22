@@ -8,6 +8,7 @@ import platform
 import random
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,34 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def local_rank() -> int:
+    return int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+
+
+def is_main_process() -> bool:
+    return local_rank() == 0
+
+
+def distributed_barrier() -> None:
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+    except Exception:
+        pass
+
+
+def wait_for_files(paths: list[Path], timeout_seconds: int = 1800) -> None:
+    deadline = time.time() + timeout_seconds
+    missing = [path for path in paths if not path.exists()]
+    while missing and time.time() < deadline:
+        time.sleep(2)
+        missing = [path for path in paths if not path.exists()]
+    if missing:
+        raise TimeoutError(f"Timed out waiting for files: {[str(path) for path in missing]}")
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     try:
@@ -176,4 +205,3 @@ def check_runtime(config: dict[str, Any]) -> list[str]:
         # Not fatal for public models, but useful for gated baselines and rate limits.
         print("Warning: HF_TOKEN is not set. Public models may still work; gated models or high-rate downloads may fail.")
     return errors
-

@@ -22,6 +22,8 @@ class JsonlTrainerLogger:
 
         class _Callback(TrainerCallback):
             def on_log(self, args, state, control, logs=None, **kwargs):
+                if hasattr(state, "is_world_process_zero") and not state.is_world_process_zero:
+                    return
                 row = {"step": state.global_step, "epoch": state.epoch, **(logs or {})}
                 outer.rows.append(row)
                 write_jsonl(outer.rows, outer.log_path)
@@ -32,12 +34,12 @@ class JsonlTrainerLogger:
 def _mock_train(config: dict[str, Any], output_dir: Path) -> Path:
     checkpoint = output_dir / "checkpoints" / config["model"].get("checkpoint_dir_name", "mock_checkpoint")
     checkpoint.mkdir(parents=True, exist_ok=True)
-    (checkpoint / "MOCK_CHECKPOINT.txt").write_text("Smoke-test checkpoint; no model weights were trained.\n", encoding="utf-8")
+    (checkpoint / "MOCK_ADAPTER.txt").write_text("Smoke-test LoRA adapter; no model weights were trained.\n", encoding="utf-8")
     write_jsonl(
         [{"step": 1, "loss": 0.0, "learning_rate": config["training"].get("learning_rate"), "note": "smoke test mock training"}],
         output_dir / "train_log.jsonl",
     )
-    write_json({"checkpoint_path": str(checkpoint), "mode": "mock_full_finetune"}, output_dir / "checkpoint_metadata.json")
+    write_json({"checkpoint_path": str(checkpoint), "mode": "mock_lora_finetune"}, output_dir / "checkpoint_metadata.json")
     return checkpoint
 
 
@@ -61,18 +63,35 @@ def _tokenize_records(tokenizer: Any, records: list[dict[str, Any]], max_length:
     return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
 
-def _assert_full_finetune(model: Any) -> None:
-    forbidden_attrs = ["peft_config", "active_adapter", "active_adapters"]
-    for attr in forbidden_attrs:
-        if hasattr(model, attr):
-            raise RuntimeError(f"Full fine-tuning required, but model exposes adapter/PEFT attribute: {attr}")
+def _apply_lora(model: Any, config: dict[str, Any]) -> Any:
+    try:
+        from peft import LoraConfig, get_peft_model
+    except ImportError as exc:
+        raise RuntimeError("LoRA training requires `peft`. Re-run without SKIP_INSTALL or install train/requirements.txt.") from exc
+
+    lora = config["model"].get("lora", {})
+    peft_config = LoraConfig(
+        r=int(lora.get("r", 32)),
+        lora_alpha=int(lora.get("alpha", 64)),
+        lora_dropout=float(lora.get("dropout", 0.05)),
+        bias=str(lora.get("bias", "none")),
+        task_type=str(lora.get("task_type", "CAUSAL_LM")),
+        target_modules=list(lora.get("target_modules", ["q_proj", "v_proj"])),
+    )
+    return get_peft_model(model, peft_config)
+
+
+def _assert_lora_finetune(model: Any) -> None:
+    peft_config = getattr(model, "peft_config", None)
+    if not peft_config:
+        raise RuntimeError("LoRA fine-tuning required, but model has no PEFT configuration.")
     params = list(model.named_parameters())
     trainable = [name for name, param in params if param.requires_grad]
     if not trainable:
-        raise RuntimeError("No trainable parameters found.")
-    frozen = [name for name, param in params if not param.requires_grad]
-    if frozen:
-        raise RuntimeError(f"Full fine-tuning requires all parameters trainable; found frozen parameters such as {frozen[:3]}")
+        raise RuntimeError("No trainable LoRA parameters found.")
+    non_lora_trainable = [name for name in trainable if "lora_" not in name.lower()]
+    if non_lora_trainable:
+        raise RuntimeError(f"LoRA fine-tuning should only train LoRA parameters; found trainable base params: {non_lora_trainable[:5]}")
 
 
 def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
@@ -84,7 +103,7 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
         from datasets import Dataset
         from transformers import AutoModelForCausalLM, AutoTokenizer, DataCollatorForSeq2Seq, Trainer, TrainingArguments
     except ImportError as exc:
-        raise RuntimeError("Full training requires torch, datasets, and transformers.") from exc
+        raise RuntimeError("LoRA training requires torch, datasets, transformers, and peft.") from exc
 
     data_dir = output_dir / "data"
     train_rows = read_jsonl(data_dir / "train.jsonl")
@@ -103,12 +122,17 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
     )
     if config["model"].get("gradient_checkpointing"):
         model.gradient_checkpointing_enable()
-    _assert_full_finetune(model)
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+    model = _apply_lora(model, config)
+    _assert_lora_finetune(model)
+    if hasattr(model, "print_trainable_parameters"):
+        model.print_trainable_parameters()
 
     max_len = int(config["training"].get("max_seq_length", 2048))
     train_ds = Dataset.from_dict(_tokenize_records(tokenizer, train_rows, max_len))
     val_ds = Dataset.from_dict(_tokenize_records(tokenizer, val_rows, max_len)) if val_rows else None
-    checkpoint_dir = output_dir / "checkpoints" / config["model"].get("checkpoint_dir_name", "qwen_full_finetuned")
+    checkpoint_dir = output_dir / "checkpoints" / config["model"].get("checkpoint_dir_name", "qwen_lora_adapter")
     logger = JsonlTrainerLogger(output_dir / "train_log.jsonl")
     cb = logger.callback()
 
@@ -142,10 +166,21 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
     try:
         trainer.train()
         trainer.save_model(str(checkpoint_dir))
-        tokenizer.save_pretrained(str(checkpoint_dir))
+        if trainer.is_world_process_zero():
+            tokenizer.save_pretrained(str(checkpoint_dir))
     except Exception:
-        write_json({"checkpoint_path": str(checkpoint_dir), "failed_after_seconds": time.time() - start}, output_dir / "checkpoint_metadata.json")
+        if trainer.is_world_process_zero():
+            write_json({"checkpoint_path": str(checkpoint_dir), "failed_after_seconds": time.time() - start}, output_dir / "checkpoint_metadata.json")
         raise
-    write_json({"checkpoint_path": str(checkpoint_dir), "train_seconds": time.time() - start, "mode": "full_finetune"}, output_dir / "checkpoint_metadata.json")
+    if trainer.is_world_process_zero():
+        write_json(
+            {
+                "checkpoint_path": str(checkpoint_dir),
+                "train_seconds": time.time() - start,
+                "mode": "lora_finetune",
+                "base_model_id": model_id,
+                "lora": config["model"].get("lora", {}),
+            },
+            output_dir / "checkpoint_metadata.json",
+        )
     return checkpoint_dir
-

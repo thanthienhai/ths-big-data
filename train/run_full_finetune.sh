@@ -24,6 +24,8 @@ ACCELERATE_CONFIG="$REPO_ROOT/train/configs/accelerate_2xh200.yaml"
 NUM_GPUS="2"
 CUDA_VISIBLE_DEVICES="4,5"
 export CUDA_VISIBLE_DEVICES
+RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+export RUN_ID
 
 if [[ -z "$CONFIG_PATH" ]]; then
   if [[ "$SMOKE_TEST" == "1" || "$SMOKE_TEST" == "true" ]]; then

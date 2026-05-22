@@ -1,5 +1,5 @@
 experiment:
-  name: smoke_full_finetune_pipeline
+  name: smoke_lora_finetune_pipeline
   seed: 7
   output_root: train/outputs
   smoke_test: true
@@ -28,7 +28,17 @@ model:
   trust_remote_code: false
   dtype: auto
   gradient_checkpointing: false
-  checkpoint_dir_name: smoke_full_finetuned
+  checkpoint_dir_name: smoke_lora_adapter
+  fine_tuning_method: lora
+  lora:
+    r: 4
+    alpha: 8
+    dropout: 0.0
+    bias: none
+    task_type: CAUSAL_LM
+    target_modules:
+      - q_proj
+      - v_proj
 
 training:
   num_train_epochs: 1
@@ -71,4 +81,3 @@ baselines:
     - name: optional_mock
       model_id: smoke/mock-optional
       required: false
-

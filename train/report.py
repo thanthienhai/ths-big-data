@@ -6,7 +6,7 @@ from typing import Any
 
 def write_summary(output_dir: Path, dataset_summary: dict[str, Any], eval_status: dict[str, Any], metrics: list[dict[str, Any]], config: dict[str, Any]) -> None:
     lines = [
-        "# Full Fine-Tuning Run Summary",
+        "# LoRA Fine-Tuning Run Summary",
         "",
         "## Dataset",
         f"- Dataset: `{dataset_summary.get('dataset_id')}`",
@@ -16,7 +16,7 @@ def write_summary(output_dir: Path, dataset_summary: dict[str, Any], eval_status
         "",
         "## Training",
         f"- Base model: `{config.get('model', {}).get('base_model_id')}`",
-        f"- Fine-tuning type: `full`",
+        f"- Fine-tuning type: `lora`",
         f"- Smoke test: `{config.get('experiment', {}).get('smoke_test')}`",
         "",
         "## Evaluation Status",
@@ -40,4 +40,3 @@ def write_summary(output_dir: Path, dataset_summary: dict[str, Any], eval_status
         ]
     )
     (output_dir / "run_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-

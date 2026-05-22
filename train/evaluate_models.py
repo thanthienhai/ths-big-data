@@ -13,19 +13,26 @@ def _mock_answer(row: dict[str, Any], model_name: str) -> str:
     return row["answer"].split(".")[0] + "."
 
 
-def _generate_real(model_id_or_path: str, rows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+def _generate_real(model_id_or_path: str, rows: list[dict[str, Any]], config: dict[str, Any], is_adapter: bool = False) -> list[dict[str, Any]]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id_or_path, trust_remote_code=bool(config["model"].get("trust_remote_code", True)))
+    tokenizer_source = config["model"]["base_model_id"] if is_adapter else model_id_or_path
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=bool(config["model"].get("trust_remote_code", True)))
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    base_source = config["model"]["base_model_id"] if is_adapter else model_id_or_path
     model = AutoModelForCausalLM.from_pretrained(
-        model_id_or_path,
+        base_source,
         trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
         torch_dtype="auto",
         device_map="auto",
     )
+    if is_adapter:
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(model, model_id_or_path)
+        model.eval()
     gen_cfg = config.get("generation", {})
     outputs = []
     for row in rows:
@@ -45,7 +52,7 @@ def _generate_real(model_id_or_path: str, rows: list[dict[str, Any]], config: di
     return outputs
 
 
-def _evaluate_one(name: str, model_id: str, rows: list[dict[str, Any]], config: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+def _evaluate_one(name: str, model_id: str, rows: list[dict[str, Any]], config: dict[str, Any], is_adapter: bool = False) -> tuple[list[dict[str, Any]], str]:
     if config.get("experiment", {}).get("smoke_test") or model_id.startswith("smoke/"):
         outputs = []
         for row in rows:
@@ -53,7 +60,7 @@ def _evaluate_one(name: str, model_id: str, rows: list[dict[str, Any]], config: 
             outputs.append({**row, "generated_answer": _mock_answer(row, name), "latency_seconds": time.time() - start, "failure": ""})
         return outputs, ""
     try:
-        return _generate_real(model_id, rows, config), ""
+        return _generate_real(model_id, rows, config, is_adapter=is_adapter), ""
     except Exception as exc:
         return [], str(exc)
 
@@ -71,12 +78,12 @@ def evaluate_all(config: dict[str, Any], output_dir: Path, checkpoint_dir: Path)
         models.append(dict(item))
     for item in config.get("baselines", {}).get("optional", []):
         models.append(dict(item))
-    models.append({"name": "qwen3_full_finetuned", "model_id": str(checkpoint_dir), "required": True, "is_finetuned": True})
+    models.append({"name": "qwen3_lora_finetuned", "model_id": str(checkpoint_dir), "required": True, "is_adapter": True})
 
     status: dict[str, Any] = {}
     for model in models:
         name = model["name"]
-        outputs, failure = _evaluate_one(name, model["model_id"], rows, config)
+        outputs, failure = _evaluate_one(name, model["model_id"], rows, config, is_adapter=bool(model.get("is_adapter", False)))
         if failure:
             status[name] = {"status": "failed", "reason": failure, "required": bool(model.get("required", False))}
             if model.get("required"):
@@ -86,4 +93,3 @@ def evaluate_all(config: dict[str, Any], output_dir: Path, checkpoint_dir: Path)
             status[name] = {"status": "ok", "predictions": len(outputs), "required": bool(model.get("required", False))}
             write_jsonl(outputs, pred_dir / f"{name}.jsonl")
     return status
-
