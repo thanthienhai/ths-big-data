@@ -5,6 +5,11 @@ experiment:
   smoke_test: false
   require_cuda: true
   min_free_disk_gb: 30
+  distributed:
+    use_accelerate: true
+    num_processes: 2
+    mixed_precision: bf16
+    config_file: train/configs/accelerate_2xh200.yaml
 
 dataset:
   id: YuITC/Vietnamese-Legal-Documents
@@ -50,9 +55,9 @@ model:
 
 training:
   num_train_epochs: 1
-  per_device_train_batch_size: 1
+  per_device_train_batch_size: 2
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 4
   learning_rate: 0.000005
   weight_decay: 0.01
   warmup_ratio: 0.03
@@ -92,4 +97,3 @@ baselines:
     - name: phi_3_5_mini
       model_id: microsoft/Phi-3.5-mini-instruct
       required: false
-

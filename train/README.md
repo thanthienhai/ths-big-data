@@ -18,6 +18,37 @@ bash train/run_full_finetune.sh
 
 The default run uses `train/configs/full_finetune_10pct.yaml`, samples 10% of the configured dataset with a fixed seed, trains Qwen3-4B with full-parameter optimization, evaluates baselines, and writes outputs to `train/outputs/`.
 
+## GPU Configuration
+
+GPU selection is controlled by the shell entrypoint and the Accelerate config:
+
+- Shell/runtime: `train/run_full_finetune.sh`
+- Accelerate 2-GPU config: `train/configs/accelerate_2xh200.yaml`
+- Training batch settings: `train/configs/full_finetune_10pct.yaml`
+
+For two H200 GPUs, run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 NUM_GPUS=2 USE_ACCELERATE=1 bash train/run_full_finetune.sh
+```
+
+The default full experiment already sets:
+
+```text
+CUDA_VISIBLE_DEVICES=0,1
+NUM_GPUS=2
+ACCELERATE_CONFIG=train/configs/accelerate_2xh200.yaml
+mixed_precision=bf16
+```
+
+In `train/configs/full_finetune_10pct.yaml`, the default per-GPU batch is `per_device_train_batch_size: 2` and `gradient_accumulation_steps: 4`. With 2 GPUs, the effective batch size is:
+
+```text
+2 GPUs * batch 2 * grad accumulation 4 = 16 samples/update
+```
+
+If H200 memory allows, increase `per_device_train_batch_size` first. If training is unstable or out of memory, reduce it to `1`.
+
 ## Prerequisites
 
 - Python 3.10 or newer.
@@ -39,6 +70,8 @@ Useful overrides:
 bash train/run_full_finetune.sh CONFIG_PATH=train/configs/smoke_test.yaml
 bash train/run_full_finetune.sh OUTPUT_ROOT=train/outputs/custom
 bash train/run_full_finetune.sh BASELINES=Qwen/Qwen2.5-3B-Instruct,microsoft/Phi-3.5-mini-instruct
+bash train/run_full_finetune.sh CUDA_VISIBLE_DEVICES=2,3 NUM_GPUS=2
+bash train/run_full_finetune.sh USE_ACCELERATE=0
 ```
 
 The default experiment intentionally uses only 10% of the dataset. Scores from this run must be reported as 10%-data results, not full-dataset results.

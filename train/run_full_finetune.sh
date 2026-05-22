@@ -18,6 +18,11 @@ BASELINES="${BASELINES:-}"
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 VENV_DIR="${VENV_DIR:-$REPO_ROOT/.venv-full-finetune}"
+USE_ACCELERATE="${USE_ACCELERATE:-auto}"
+ACCELERATE_CONFIG="${ACCELERATE_CONFIG:-$REPO_ROOT/train/configs/accelerate_2xh200.yaml}"
+NUM_GPUS="${NUM_GPUS:-2}"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+export CUDA_VISIBLE_DEVICES
 
 if [[ -z "$CONFIG_PATH" ]]; then
   if [[ "$SMOKE_TEST" == "1" || "$SMOKE_TEST" == "true" ]]; then
@@ -69,4 +74,19 @@ if [[ "$SMOKE_TEST" == "1" || "$SMOKE_TEST" == "true" ]]; then
   EXTRA_ARGS+=(--smoke-test)
 fi
 
-"${PYTHON_CMD[@]}" -m train.pipeline --config "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
+if [[ "$USE_ACCELERATE" == "auto" ]]; then
+  if [[ "$SMOKE_TEST" == "1" || "$SMOKE_TEST" == "true" ]]; then
+    USE_ACCELERATE=0
+  else
+    USE_ACCELERATE=1
+  fi
+fi
+
+if [[ "$USE_ACCELERATE" == "1" || "$USE_ACCELERATE" == "true" ]]; then
+  "${PYTHON_CMD[@]}" -m accelerate.commands.launch \
+    --config_file "$ACCELERATE_CONFIG" \
+    --num_processes "$NUM_GPUS" \
+    -m train.pipeline --config "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
+else
+  "${PYTHON_CMD[@]}" -m train.pipeline --config "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
+fi
