@@ -112,6 +112,16 @@ def distributed_barrier() -> None:
         pass
 
 
+def destroy_distributed() -> None:
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+    except Exception:
+        pass
+
+
 def wait_for_files(paths: list[Path], timeout_seconds: int = 1800) -> None:
     deadline = time.time() + timeout_seconds
     missing = [path for path in paths if not path.exists()]
@@ -201,7 +211,7 @@ def check_runtime(config: dict[str, Any]) -> list[str]:
         except Exception as exc:
             errors.append(f"Could not inspect CUDA availability: {exc}")
 
-    if config.get("model", {}).get("base_model_id", "").startswith(("Qwen/", "meta-llama/", "google/")) and not os.environ.get("HF_TOKEN"):
+    if is_main_process() and config.get("model", {}).get("base_model_id", "").startswith(("Qwen/", "meta-llama/", "google/")) and not os.environ.get("HF_TOKEN"):
         # Not fatal for public models, but useful for gated baselines and rate limits.
         print("Warning: HF_TOKEN is not set. Public models may still work; gated models or high-rate downloads may fail.")
     return errors

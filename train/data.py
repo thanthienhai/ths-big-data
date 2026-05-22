@@ -102,7 +102,7 @@ def _split_rows(rows: list[dict[str, Any]], ratios: dict[str, float], seed: int)
     train_ratio = float(ratios.get("train", 0.8))
     val_ratio = float(ratios.get("validation", 0.1))
 
-    if has_groups:
+    if has_groups and len({row["source_group"] for row in rows}) >= 3:
         groups: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             groups.setdefault(str(row["source_group"]), []).append(row)
@@ -117,6 +117,7 @@ def _split_rows(rows: list[dict[str, Any]], ratios: dict[str, float], seed: int)
         }
         splits = {name: [row for key in selected for row in groups[key]] for name, selected in split_keys.items()}
     else:
+        has_groups = False
         shuffled = list(rows)
         rng.shuffle(shuffled)
         train_cut = max(1, int(len(shuffled) * train_ratio))
@@ -128,6 +129,8 @@ def _split_rows(rows: list[dict[str, Any]], ratios: dict[str, float], seed: int)
         }
     if not splits["test"] and len(rows) > 1:
         splits["test"].append(splits["train"].pop())
+    if not splits["validation"] and len(splits["train"]) > 1:
+        splits["validation"].append(splits["train"].pop())
     return splits, has_groups
 
 
@@ -158,4 +161,3 @@ def prepare_dataset(config: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     }
     write_json(summary, output_dir / "dataset_summary.json")
     return summary
-

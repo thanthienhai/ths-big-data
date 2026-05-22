@@ -22,12 +22,20 @@ def _generate_real(model_id_or_path: str, rows: list[dict[str, Any]], config: di
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     base_source = config["model"]["base_model_id"] if is_adapter else model_id_or_path
-    model = AutoModelForCausalLM.from_pretrained(
-        base_source,
-        trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
-        torch_dtype="auto",
-        device_map="auto",
-    )
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            base_source,
+            trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
+            dtype="auto",
+            device_map="auto",
+        )
+    except TypeError:
+        model = AutoModelForCausalLM.from_pretrained(
+            base_source,
+            trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
+            torch_dtype="auto",
+            device_map="auto",
+        )
     if is_adapter:
         from peft import PeftModel
 

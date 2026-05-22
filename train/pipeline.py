@@ -14,6 +14,7 @@ from .utils import (
     apply_overrides,
     check_runtime,
     collect_runtime_metadata,
+    destroy_distributed,
     distributed_barrier,
     is_main_process,
     load_yaml,
@@ -79,6 +80,7 @@ def main() -> int:
             checkpoint_dir = train_full_model(config, output_dir)
         distributed_barrier()
         if not is_main_process():
+            destroy_distributed()
             return 0
         if not dataset_summary:
             dataset_summary_path = output_dir / "dataset_summary.json"
@@ -94,10 +96,12 @@ def main() -> int:
             write_json({"error": str(exc)}, output_dir / "failure.json")
             if dataset_summary:
                 write_summary(output_dir, dataset_summary, eval_status, metrics, config)
+        destroy_distributed()
         raise
 
     if is_main_process():
         print(f"Run complete: {output_dir}")
+    destroy_distributed()
     return 0
 
 

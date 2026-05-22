@@ -94,6 +94,17 @@ def _assert_lora_finetune(model: Any) -> None:
         raise RuntimeError(f"LoRA fine-tuning should only train LoRA parameters; found trainable base params: {non_lora_trainable[:5]}")
 
 
+def _from_pretrained_kwargs(config: dict[str, Any], torch_dtype: Any) -> dict[str, Any]:
+    kwargs = {
+        "trust_remote_code": bool(config["model"].get("trust_remote_code", True)),
+    }
+    if torch_dtype != "auto":
+        kwargs["dtype"] = torch_dtype
+    else:
+        kwargs["dtype"] = "auto"
+    return kwargs
+
+
 def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
     if config.get("experiment", {}).get("smoke_test"):
         return _mock_train(config, output_dir)
@@ -115,11 +126,14 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
 
     dtype = config["model"].get("dtype", "auto")
     torch_dtype = "auto" if dtype == "auto" else getattr(torch, dtype)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
-        torch_dtype=torch_dtype,
-    )
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_id, **_from_pretrained_kwargs(config, torch_dtype))
+    except TypeError:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=bool(config["model"].get("trust_remote_code", True)),
+            torch_dtype=torch_dtype,
+        )
     if config["model"].get("gradient_checkpointing"):
         model.gradient_checkpointing_enable()
         if hasattr(model, "enable_input_require_grads"):
@@ -132,6 +146,7 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
     max_len = int(config["training"].get("max_seq_length", 2048))
     train_ds = Dataset.from_dict(_tokenize_records(tokenizer, train_rows, max_len))
     val_ds = Dataset.from_dict(_tokenize_records(tokenizer, val_rows, max_len)) if val_rows else None
+    eval_strategy = config["training"].get("eval_strategy", "epoch") if val_ds is not None and len(val_ds) > 0 else "no"
     checkpoint_dir = output_dir / "checkpoints" / config["model"].get("checkpoint_dir_name", "qwen_lora_adapter")
     logger = JsonlTrainerLogger(output_dir / "train_log.jsonl")
     cb = logger.callback()
@@ -147,7 +162,7 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
         warmup_ratio=float(config["training"].get("warmup_ratio", 0.0)),
         logging_steps=int(config["training"].get("logging_steps", 5)),
         save_strategy=config["training"].get("save_strategy", "epoch"),
-        eval_strategy=config["training"].get("eval_strategy", "epoch"),
+        eval_strategy=eval_strategy,
         max_steps=int(config["training"].get("max_steps", -1)),
         fp16=bool(config["training"].get("fp16", False)),
         bf16=bool(config["training"].get("bf16", False)),
@@ -158,7 +173,7 @@ def train_full_model(config: dict[str, Any], output_dir: Path) -> Path:
         args=args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model),
         callbacks=[cb] if cb else [],
     )
