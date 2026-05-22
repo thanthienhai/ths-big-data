@@ -61,9 +61,13 @@ if [[ "$SKIP_INSTALL" != "1" ]]; then
   # shellcheck disable=SC1091
   source "$VENV_DIR/Scripts/activate" 2>/dev/null || source "$VENV_DIR/bin/activate"
   python -m pip install --upgrade pip
-  python -m pip install -r "$REPO_ROOT/train/requirements.txt"
+  python -m pip install --upgrade --upgrade-strategy eager -r "$REPO_ROOT/train/requirements.txt"
 else
   echo "Skipping dependency installation because SKIP_INSTALL=1"
+fi
+
+if [[ "$SMOKE_TEST" != "1" && "$SMOKE_TEST" != "true" ]]; then
+  "${PYTHON_CMD[@]}" -m train.check_env
 fi
 
 EXTRA_ARGS=()
