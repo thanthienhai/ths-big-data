@@ -29,10 +29,10 @@ GPU selection is controlled by the shell entrypoint and the Accelerate config:
 For two H200 GPUs, run:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 NUM_GPUS=2 USE_ACCELERATE=1 bash train/run_full_finetune.sh
+bash train/run_full_finetune.sh
 ```
 
-The default full experiment already sets:
+The shell script hard-codes the target GPU runtime:
 
 ```text
 CUDA_VISIBLE_DEVICES=0,1
@@ -70,8 +70,6 @@ Useful overrides:
 bash train/run_full_finetune.sh CONFIG_PATH=train/configs/smoke_test.yaml
 bash train/run_full_finetune.sh OUTPUT_ROOT=train/outputs/custom
 bash train/run_full_finetune.sh BASELINES=Qwen/Qwen2.5-3B-Instruct,microsoft/Phi-3.5-mini-instruct
-bash train/run_full_finetune.sh CUDA_VISIBLE_DEVICES=2,3 NUM_GPUS=2
-bash train/run_full_finetune.sh USE_ACCELERATE=0
 ```
 
 The default experiment intentionally uses only 10% of the dataset. Scores from this run must be reported as 10%-data results, not full-dataset results.
