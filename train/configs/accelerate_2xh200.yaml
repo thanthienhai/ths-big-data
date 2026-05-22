@@ -1,7 +1,6 @@
 compute_environment: LOCAL_MACHINE
 debug: false
 distributed_type: MULTI_GPU
-downcast_bfloat: "no"
 enable_cpu_affinity: false
 gpu_ids: "4,5"
 machine_rank: 0
